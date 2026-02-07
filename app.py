@@ -66,9 +66,6 @@ st.markdown("""
         padding: 0.2rem 0.5rem;
         border-radius: 5px;
     }
-    .status-border {
-        border-left: 5px solid;
-    }
     .metric-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -88,18 +85,6 @@ st.markdown("""
     .stButton button:hover {
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-    }
-    .tab-container {
-        background: #F8F9FA;
-        border-radius: 10px;
-        padding: 1rem;
-    }
-    .stDataFrame {
-        border-radius: 10px;
-        overflow: hidden;
-    }
-    .streamlit-expanderHeader {
-        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -318,7 +303,7 @@ class DatabaseManager:
                     "font_size": 12,
                     "sections": ["Бемор маълумотлари", "Тахлил натижалари", "Норма қийматлари"],
                     "features": {"include_logo": True, "include_qr": True, "include_signature": True}
-                })),
+                }), 1),
                 ('Гормон бланкаси', 'Гормонлар', 'Махсус', json.dumps({
                     "primary_color": "#E74C3C",
                     "secondary_color": "#C0392B",
@@ -326,13 +311,13 @@ class DatabaseManager:
                     "font_size": 11,
                     "sections": ["Бемор маълумотлари", "Тахлил натижалари", "Норма қийматлари", "Шифокор тавсиялари"],
                     "features": {"include_logo": True, "include_qr": False, "include_signature": True}
-                })),
+                }), 1),
             ]
             
             for template in templates:
                 cursor.execute('''
-                    INSERT INTO form_templates (template_name, template_type, category, design_config)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO form_templates (template_name, template_type, category, design_config, is_active)
+                    VALUES (?, ?, ?, ?, ?)
                 ''', template)
         
         self.conn.commit()
@@ -631,8 +616,6 @@ def manage_patients():
                 patient_id = st.text_input("🆔 Бемор ID", 
                                          value=f"P-{datetime.now().strftime('%Y%m%d')}-{np.random.randint(1000,9999)}")
             
-            notes = st.text_area("📝 Қўшимча маълумотлар")
-            
             submitted = st.form_submit_button("💾 Сақлаш", use_container_width=True)
             
             if submitted:
@@ -711,9 +694,11 @@ def manage_patients():
                         col_edit1, col_edit2 = st.columns(2)
                         with col_edit1:
                             edit_name = st.text_input("Исми-шарифи", value=patient_data[2])
-                            edit_birth_date = st.date_input("Туғилган сана", value=datetime.strptime(patient_data[3], '%Y-%m-%d').date() if isinstance(patient_data[3], str) else patient_data[3])
+                            edit_birth_date = st.date_input("Туғилган сана", 
+                                                           value=datetime.strptime(patient_data[3], '%Y-%m-%d').date() if isinstance(patient_data[3], str) else patient_data[3])
                         with col_edit2:
-                            edit_gender = st.selectbox("Жинси", ["Эркак", "Аёл"], index=0 if patient_data[4] == "Эркак" else 1)
+                            edit_gender = st.selectbox("Жинси", ["Эркак", "Аёл"], 
+                                                      index=0 if patient_data[4] == "Эркак" else 1)
                             edit_phone = st.text_input("Телефон", value=patient_data[5] or "")
                         
                         edit_address = st.text_area("Манзил", value=patient_data[6] or "")
@@ -732,11 +717,9 @@ def manage_patients():
                         
                         with col_delete:
                             if st.button("🗑️ Беморни ўчириш", use_container_width=True):
-                                # Аввал боглик натижаларни ўчирамиз
-                                cursor.execute("DELETE FROM test_results WHERE patient_id = ?", (selected_id,))
                                 cursor.execute("DELETE FROM patients WHERE id = ?", (selected_id,))
                                 db.conn.commit()
-                                st.success("✅ Бемор ва унинг тахлил натижалари ўчирилди!")
+                                st.success("✅ Бемор ўчирилди!")
                                 st.rerun()
         else:
             st.info("📭 Ҳали беморлар мавжуд эмас")
@@ -881,17 +864,18 @@ def manage_test_results():
             # Автомат параметр қўшиш
             if st.button("Автомат параметрлар қўшиш"):
                 sample_params = [
-                    (test_type, f"{test_type} параметр 1", f"{test_type[:3]}_PAR1", "ед.", 0, 100),
-                    (test_type, f"{test_type} параметр 2", f"{test_type[:3]}_PAR2", "ед.", 0, 200),
+                    (test_type, f"{test_type} параметр 1", f"{test_type[:3]}_PAR1", "ед.", 0, 100, 0, 0, 0, 100),
+                    (test_type, f"{test_type} параметр 2", f"{test_type[:3]}_PAR2", "ед.", 0, 100, 0, 0, 0, 200),
                 ]
                 
                 for param in sample_params:
                     cursor.execute('''
                         INSERT OR IGNORE INTO test_parameters 
                         (category, parameter_name, parameter_code, unit, 
-                         min_age, max_age, default_min_value, default_max_value)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', param + (0, 100, 0, 100))
+                         min_age, max_age, gender_specific, menstrual_phase_specific,
+                         default_min_value, default_max_value)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', param)
                 
                 db.conn.commit()
                 st.success("✅ Автомат параметрлар қўшилди!")
@@ -1005,10 +989,7 @@ def manage_test_results():
             if success_count > 0:
                 db.conn.commit()
                 st.success(f"✅ {success_count} та тахлил натижалари муваффақиятли сақланди!")
-                
-                # Натижани кўриш
-                if st.button("📄 Натижани кўриш"):
-                    st.rerun()
+                st.rerun()
     
     with tab2:
         st.markdown("### 📋 Тахлил натижалари рўйхати")
@@ -1043,6 +1024,8 @@ def manage_test_results():
             if filter_type:
                 query += " AND tr.test_type = ?"
                 params.append(filter_type)
+            
+            query += " ORDER BY tr.test_date DESC"
             
             cursor.execute(query, params)
             results = cursor.fetchall()
@@ -1154,12 +1137,7 @@ def manage_settings():
     """Тахлил параметрлари ва нормалари созламалари"""
     st.markdown('<h1 class="section-title">⚙️ Созламалар</h1>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🔬 Параметрлар", 
-        "📏 Нормалар", 
-        "🔄 Ўлчов бирликлари",
-        "📊 Категориялар"
-    ])
+    tab1, tab2, tab3 = st.tabs(["🔬 Параметрлар", "📏 Нормалар", "📊 Категориялар"])
     
     with tab1:
         st.markdown("### 🔬 Тахлил параметрлари")
@@ -1366,35 +1344,6 @@ def manage_settings():
             st.info("📭 Параметрлар мавжуд эмас")
     
     with tab3:
-        st.markdown("### 🔄 Ўлчов бирликлари")
-        
-        # Ўлчов бирликлари рўйхати
-        units = {
-            "Қон тахлиллари": ["×10⁹/л", "×10¹²/л", "г/л", "%", "фл", "пг"],
-            "Биохимик": ["ммоль/л", "мкмоль/л", "г/л", "Е/л", "мг/дл"],
-            "Гормонлар": ["МЕ/л", "мкМЕ/мл", "нг/мл", "пг/мл", "нмоль/л"],
-            "ИФА": ["S/CO", "Индекс", "ОД", "МЕ/мл"],
-            "Бошқа": ["мг/л", "мкг/л", "нг/л", "%"]
-        }
-        
-        for category, unit_list in units.items():
-            with st.expander(f"📏 {category}"):
-                cols = st.columns(3)
-                for i, unit in enumerate(unit_list):
-                    col_idx = i % 3
-                    with cols[col_idx]:
-                        st.info(f"**{unit}**")
-        
-        # Янги ўлчов бирлиги қўшиш
-        with st.expander("➕ Янги ўлчов бирлиги қўшиш"):
-            new_category = st.text_input("Категория")
-            new_unit = st.text_input("Ўлчов бирлиги")
-            new_symbol = st.text_input("Символ/қисқартма")
-            
-            if st.button("Ўлчов бирлиги қўшиш"):
-                st.success(f"✅ {new_unit} қўшилди! (Базага сақлаш функцияси ишга туширилмоқда)")
-    
-    with tab4:
         st.markdown("### 📊 Тахлил категориялари")
         
         categories = [
@@ -1581,7 +1530,7 @@ def manage_templates():
                     features = {}
                 
                 # Шаблон намунасини кўрсатиш
-                st.markdown(f"""
+                html_content = f"""
                 <div style="
                     border: 2px solid {primary_color};
                     border-radius: 10px;
@@ -1594,50 +1543,87 @@ def manage_templates():
                 ">
                     <h2 style="color: {primary_color}; text-align: center;">{template_name}</h2>
                     <p style="text-align: center; color: #7F8C8D;">{template_type} • {category}</p>
-                    <hr style="border-color: {secondary_color}; margin: 1rem 0;">
-                    
-                    {'<h4 style="color: ' + secondary_color + ';">Бемор маълумотлари</h4>' if "Бемор маълумотлари" in sections else ''}
-                    {'<p><strong>Исми-шарифи:</strong> Намуна бемор</p>' if "Бемор маълумотлари" in sections else ''}
-                    {'<p><strong>Туғилган сана:</strong> 01.01.1990</p>' if "Бемор маълумотлари" in sections else ''}
-                    {'<p><strong>Бемор ID:</strong> P-20240115-0001</p>' if "Бемор маълумотлари" in sections else ''}
-                    
-                    {'<h4 style="color: ' + secondary_color + '; margin-top: 1.5rem;">Тахлил натижалари</h4>' if "Тахлил натижалари" in sections else ''}
-                    {'<table style="width: 100%; border-collapse: collapse; margin-top: 0.5rem;">' if "Тахлил натижалари" in sections else ''}
-                    {'<tr style="background-color: ' + primary_color + '; color: white;">' if "Тахлил натижалари" in sections else ''}
-                    {'<th style="padding: 8px; text-align: left;">Параметр</th>' if "Тахлил натижалари" in sections else ''}
-                    {'<th style="padding: 8px; text-align: left;">Қиймат</th>' if "Тахлил натижалари" in sections else ''}
-                    {'<th style="padding: 8px; text-align: left;">Норма</th>' if "Тахлил натижалари" in sections else ''}
-                    {'<th style="padding: 8px; text-align: left;">Холат</th>' if "Тахлил натижалари" in sections else ''}
-                    {'</tr>' if "Тахлил натижалари" in sections else ''}
-                    {'<tr style="border-bottom: 1px solid #ddd;">' if "Тахлил натижалари" in sections else ''}
-                    {'<td style="padding: 8px;">Глюкоза</td>' if "Тахлил натижалари" in sections else ''}
-                    {'<td style="padding: 8px;">5.8 ммоль/л</td>' if "Тахлил натижалари" in sections else ''}
-                    {'<td style="padding: 8px;">3.9-6.1</td>' if "Тахлил натижалари" in sections else ''}
-                    {'<td style="padding: 8px; color: green;">✅ Норма</td>' if "Тахлил натижалари" in sections else ''}
-                    {'</tr>' if "Тахлил натижалари" in sections else ''}
-                    {'</table>' if "Тахлил натижалари" in sections else ''}
-                    
-                    {'<h4 style="color: ' + secondary_color + '; margin-top: 1.5rem;">Шифокор тавсиялари</h4>' if "Шифокор тавсиялари" in sections else ''}
-                    {'<p>Натижалар норма доирасида. Қўшимча тадқиқот талаб этилмайди.</p>' if "Шифокор тавсиялари" in sections else ''}
-                    
-                    <div style="margin-top: 2rem; color: #7F8C8D;">
-                        {'<p>**Изох:** Натижалар норма доирасида</p>' if "Изохлар" in sections else ''}
-                        <p>**Таҳлил санаси:** {date.today().strftime('%d.%m.%Y')}</p>
-                        {'<div style="margin-top: 3rem; text-align: right;">___________<br><em>Имзо</em></div>' if features.get('include_signature', False) else ''}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    <hr style="border-color: {secondary_color}; margin: 1rem 0;">"""
                 
+                if "Бемор маълумотлари" in sections:
+                    html_content += f"""
+                    <h4 style="color: {secondary_color};">Бемор маълумотлари</h4>
+                    <p><strong>Исми-шарифи:</strong> Намуна бемор</p>
+                    <p><strong>Туғилган сана:</strong> 01.01.1990</p>
+                    <p><strong>Бемор ID:</strong> P-20240115-0001</p>"""
+                
+                if "Тахлил натижалари" in sections:
+                    html_content += f"""
+                    <h4 style="color: {secondary_color}; margin-top: 1.5rem;">Тахлил натижалари</h4>
+                    <table style="width: 100%; border-collapse: collapse; margin-top: 0.5rem;">
+                        <tr style="background-color: {primary_color}; color: white;">
+                            <th style="padding: 8px; text-align: left;">Параметр</th>
+                            <th style="padding: 8px; text-align: left;">Қиймат</th>
+                            <th style="padding: 8px; text-align: left;">Норма</th>
+                            <th style="padding: 8px; text-align: left;">Холат</th>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px;">Глюкоза</td>
+                            <td style="padding: 8px;">5.8 ммоль/л</td>
+                            <td style="padding: 8px;">3.9-6.1</td>
+                            <td style="padding: 8px; color: green;">✅ Норма</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px;">WBC</td>
+                            <td style="padding: 8px;">7.2 ×10⁹/л</td>
+                            <td style="padding: 8px;">4.0-10.0</td>
+                            <td style="padding: 8px; color: green;">✅ Норма</td>
+                        </tr>
+                    </table>"""
+                
+                if "Шифокор тавсиялари" in sections:
+                    html_content += f"""
+                    <h4 style="color: {secondary_color}; margin-top: 1.5rem;">Шифокор тавсиялари</h4>
+                    <p>Натижалар норма доирасида. Қўшимча тадқиқот талаб этилмайди.</p>"""
+                
+                if "Изохлар" in sections:
+                    html_content += f"""
+                    <h4 style="color: {secondary_color}; margin-top: 1.5rem;">Изохлар</h4>
+                    <p>Натижалар норма доирасида.</p>"""
+                
+                html_content += f"""
+                    <div style="margin-top: 2rem; color: #7F8C8D;">
+                        <p><strong>Таҳлил санаси:</strong> {date.today().strftime('%d.%m.%Y')}</p>"""
+                
+                if features.get('include_signature', False):
+                    html_content += """
+                        <div style="margin-top: 3rem; text-align: right;">___________<br><em>Имзо</em></div>"""
+                
+                html_content += """
+                    </div>
+                </div>"""
+                
+                # HTML ни кўрсатиш
+                st.markdown(html_content, unsafe_allow_html=True)
+                
+                # Функционал тугмалар
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("🖨️ Чоп этиш", use_container_width=True):
+                        st.info("Чоп этиш функционаллиги ишга туширилмоқда...")
+                with col2:
+                    if st.button("📥 PDF юклаб олиш", use_container_width=True):
+                        st.info("PDF яратиш функционаллиги ишга туширилмоқда...")
+                with col3:
+                    if st.button("⬅️ Ортга қайтиш", use_container_width=True):
+                        if 'view_template_id' in st.session_state:
+                            del st.session_state.view_template_id
+                        if 'view_template_name' in st.session_state:
+                            del st.session_state.view_template_name
+                        st.rerun()
+            else:
+                st.error("Шаблон топилмади")
                 if st.button("⬅️ Ортга қайтиш"):
                     if 'view_template_id' in st.session_state:
                         del st.session_state.view_template_id
-                    if 'view_template_name' in st.session_state:
-                        del st.session_state.view_template_name
                     st.rerun()
-            else:
-                st.error("Шаблон топилмади")
         else:
-            st.info("👈 Шаблонни кўриш учун шу табдаги шаблонлар рўйхатидан '👁️' тугмасини босинг")
+            st.info("👈 Шаблонни кўриш учун 'Шаблонлар' табидаги шаблонлар рўйхатидан '👁️' тугмасини босинг")
 
 # =================== ҲИСОБОТЛАР ===================
 def show_reports():
@@ -2348,8 +2334,6 @@ def main():
         st.session_state.logged_in = False
     if 'username' not in st.session_state:
         st.session_state.username = ""
-    if 'show_register' not in st.session_state:
-        st.session_state.show_register = False
     
     try:
         # Авторизация текшируви
